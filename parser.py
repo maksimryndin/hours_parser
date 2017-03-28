@@ -1,32 +1,37 @@
 # coding: utf-8
 from __future__ import unicode_literals
-from datetime import datetime
+from datetime import datetime, timedelta, time
+from collections import OrderedDict
 import re
 import unittest
+import copy
 
 
-WEEKDAYS = {
-    'пн': 1,
-    'понедельник': 1,
-    'вт': 2,
-    'вторник': 2,
-    'ср': 3,
-    'среда': 3,
-    'чт': 4,
-    'четверг': 4,
-    'пт': 5,
-    'пятница': 5,
-    'сб': 6,
-    'суббота': 6,
-    'вс': 7,
-    'воскресенье': 7,
-}
+WEEKDAYS = OrderedDict([    # Order matters: long names should come first in regex
+    ('понедельник', 1),
+    ('пн', 1),
+    ('вторник', 2),
+    ('вт', 2),
+    ('среда', 3),
+    ('ср', 3),
+    ('четверг', 4),
+    ('чт', 4),
+    ('пятница', 5),
+    ('пт', 5),
+    ('суббота', 6),
+    ('сб', 6),
+    ('воскресенье', 7),
+    ('воскр', 7),
+    ('вс', 7),
+])
 
 WEEKDAY_RANGES = {
                     'будни': (1, 5),
                     'без перерыва и выходных': (1, 7),
                     'выходные': (6, 7),
                     'ежедневно': (1, 7),
+                    'ежеднено': (1, 7),
+                    'режим работы': (1, 7),
 }
 
 
@@ -49,7 +54,6 @@ def build_regex():
     final_pattern.append(other_word_pattern_string)
     return '|'.join(final_pattern)
 
-# Compile re pattern on module import for efficiency
 token_pattern = re.compile(build_regex(), re.UNICODE|re.IGNORECASE)
 
 
@@ -64,38 +68,103 @@ class WorkingHours(object):
     """
 
     def __init__(self, text):
-        self.schedule = {weekday_number:None for weekday_number in set(WEEKDAYS.values())}
+        self._raw_schedule = {weekday_number:None for weekday_number in set(WEEKDAYS.values())}
         ranges = Parser(text).parse()
         for dayhours_range_pair in ranges:
             days_range = dayhours_range_pair[0]
             hours_range = dayhours_range_pair[1]
-            for day in range(days_range.start, days_range.end + 1):
-                self.schedule[day] = hours_range
+            if days_range:
+                for day in range(days_range.start, days_range.end + 1):
+                    self._raw_schedule[day] = hours_range
+            elif hours_range:  # If only hours part, then we apply this part for all days
+                for day in self.schedule.keys():
+                    self._raw_schedule[day] = hours_range
+            else:
+                raise ValueError
 
-    def check_working_time(self, datetime_obj):
-        hours_range = self.schedule[datetime_obj.isoweekday()]
+    def check_working_time(self, datetime_obj=datetime.now()):
+        hours_range = self._raw_schedule[datetime_obj.isoweekday()]
         if hours_range is None:
             return False
-        start_datetime = self.parse_hours(hours_range.start)
-        end_datetime = self.parse_hours(hours_range.end)
-        return start_datetime <= (datetime_obj.hour, datetime_obj.minute) < end_datetime
+        start_datetime = self.parse_hours(hours_range.start, datetime_obj)
+        end_datetime = self.parse_hours(hours_range.end, datetime_obj)
+        if start_datetime and end_datetime:
+            return start_datetime <= datetime_obj < end_datetime
+        else:
+            return True     # Safe default
+
+    def get_next_working_day(self, datetime_obj):
+        """
+        Next working day in iso format, i.e. an integer from 1 to 7,
+        or None in case of no working days available.
+        """
+        current_day = datetime_obj.isoweekday()
+        next_day = (current_day + 1) % 7
+        while next_day != current_day:
+            hours = self._raw_schedule[next_day]
+            if hours:
+                return next_day
+            next_day = (current_day + 1) % 7
+        return None
+
+    def get_next_working_hours(self, datetime_obj=datetime.now()):
+        next_working_day = self.get_next_working_day(datetime_obj)
+
+        next_date = datetime(datetime_obj.year, datetime_obj.month, datetime_obj.day)
+        # Modular subtraction
+        delta = ((next_working_day + 7) - datetime_obj.isoweekday()) % 7
+        next_date += timedelta(days=delta)
+        start_datetime = end_datetime = None
+        if next_working_day:
+            hours_range = self._raw_schedule[next_working_day]
+            if hours_range:
+                start_datetime = self.parse_hours(hours_range.start, next_date)
+                end_datetime = self.parse_hours(hours_range.end, next_date)
+        return start_datetime, end_datetime
+
+    def build_schedule(self):
+        """
+        Transform Range hours objects to tuples of time objects.
+        Example of returned schedule for the text 'Пн-Пт: 9.00-19.00':
+            {1: (datetime.time(9, 0), datetime.time(19, 0)),
+            2: (datetime.time(9, 0), datetime.time(19, 0)),
+            3: (datetime.time(9, 0), datetime.time(19, 0)),
+            4: (datetime.time(9, 0), datetime.time(19, 0)),
+            5: (datetime.time(9, 0), datetime.time(19, 0)),
+            6: None,
+            7: None}
+
+        """
+        schedule = {}
+        for weekday in self._raw_schedule.keys():
+            hours_range = self._raw_schedule[weekday]
+            time_obj = time()
+            if hours_range:
+                start_datetime = self.parse_hours(hours_range.start, time_obj)
+                end_datetime = self.parse_hours(hours_range.end, time_obj)
+                schedule[weekday] = (start_datetime, end_datetime)
+            else:
+                schedule[weekday] = None
+        return schedule
 
     @staticmethod
-    def parse_hours(hour):
+    def parse_hours(hour, datetime_obj):
+        hours_datetime = copy.copy(datetime_obj)
         for fmt in ("%H:%M", "%H.%M", "%H-%M",):
             try:
                 dummy_datetime = datetime.strptime(hour, fmt)
-
             except ValueError:
                 pass
             else:
-                return dummy_datetime.hour, dummy_datetime.minute
+                return hours_datetime.replace(hour=dummy_datetime.hour, minute=dummy_datetime.minute,
+                                              second=0, microsecond=0)
         try:
             dummy_datetime = datetime.strptime(hour, '%H')
         except ValueError:
             pass
         else:
-            return dummy_datetime.hour, 00
+            return hours_datetime.replace(hour=dummy_datetime.hour, minute=0,
+                                          second=0, microsecond=0)
         return None
 
 
@@ -140,7 +209,7 @@ class Parser(object):
 
     DAYTIME_TOKEN_TYPES = ('hour', 'weekday', 'weekday_range')
     SHOWROOM_WORDS = ('продаж', 'автосалон')
-    EXCLUDE_WORDS = ('с',)          # Exclude 'с ... до ...'
+    EXCLUDE_WORDS = ('с', 'c')          # Exclude 'с ... до ...' and English 'c'
 
     def __init__(self, text):
         self.state = 'OUTSIDE_DATETIME'     # Initial state
@@ -177,7 +246,6 @@ class Parser(object):
         # State transitions are listed below
         while token:
             next_token = self.get_token()
-
             if self.state == 'OUTSIDE_DATETIME' and \
                     token.type in self.DAYTIME_TOKEN_TYPES:
                 self.state = 'INSIDE_DATETIME'
@@ -288,6 +356,7 @@ class Tests(unittest.TestCase):
         Пн-пт: 9.00-19.00
         Сб, вс - выходной
         """, '[(1 - 5, 8.00 - 20.00), (6 - 7, None)]', True, False, False),
+
     ]
 
     def test_parser(self):
