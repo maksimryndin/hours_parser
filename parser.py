@@ -99,12 +99,12 @@ class WorkingHours(object):
         or None in case of no working days available.
         """
         current_day = datetime_obj.isoweekday()
-        next_day = (current_day + 1) % 7
+        next_day = current_day % 7 + 1
         while next_day != current_day:
             hours = self._raw_schedule[next_day]
             if hours:
                 return next_day
-            next_day = (current_day + 1) % 7
+            next_day = next_day % 7 + 1
         return None
 
     def get_next_working_hours(self, datetime_obj=datetime.now()):
