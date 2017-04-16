@@ -7,7 +7,8 @@ import unittest
 import copy
 
 
-WEEKDAYS = OrderedDict([    # Order matters: long names should come first in regex
+# Order matters: long names should come first in regex
+WEEKDAYS = OrderedDict([
     ('понедельник', 1),
     ('пн', 1),
     ('вторник', 2),
@@ -26,49 +27,49 @@ WEEKDAYS = OrderedDict([    # Order matters: long names should come first in reg
 ])
 
 WEEKDAY_RANGES = {
-                    'будни': (1, 5),
-                    'без перерыва и выходных': (1, 7),
-                    'выходные': (6, 7),
-                    'ежедневно': (1, 7),
-                    'ежеднено': (1, 7),
-                    'режим работы': (1, 7),
+    'будни': (1, 5),
+    'без перерыва и выходных': (1, 7),
+    'выходные': (6, 7),
+    'ежедневно': (1, 7),
+    'ежеднено': (1, 7),
+    'режим работы': (1, 7),
 }
 
 
 def build_regex():
+    """Return regex string with groups of token types."""
     final_pattern = []
 
-    hour_pattern_string = r'(?P<hour>\d{1,2}[:.-]\d{2}|\d{1,2})'  # Hour '19:00' or '19.00' or '19-00' or '19'
+    # Hour '19:00' or '19.00' or '19-00' or '19'
+    hour_pattern_string = r'(?P<hour>\d{1,2}[:.-]\d{2}|\d{1,2})'
     final_pattern.append(hour_pattern_string)
 
+    # Weekdays, i.e. 'пн' or 'суббота'
     weekday_pattern_string = r'(?P<weekday>' + '|'.join(WEEKDAYS.keys()) + ')'
-    final_pattern.append(weekday_pattern_string)  # Weekdays, i.e. 'пн' or 'суббота'
+    final_pattern.append(weekday_pattern_string)
 
+    # Weekday ranges like 'будни'
     weekday_range_pattern_string = r'(?P<weekday_range>' + '|'.join(WEEKDAY_RANGES.keys()) + ')'
-    final_pattern.append(weekday_range_pattern_string)  # Weekday ranges like 'будни'
+    final_pattern.append(weekday_range_pattern_string)
 
-    range_mark_pattern_string = r'(?P<range_mark>-|до|,)'   # Any '-' or 'до' or ',' as a range qualifier
+    # Any '-' or 'до' or ',' as a range qualifier
+    range_mark_pattern_string = r'(?P<range_mark>-|до|,)'
     final_pattern.append(range_mark_pattern_string)
 
-    other_word_pattern_string = r'(?P<word>\w+)'   #  Any alphanumeric sequence of characters or underscore
+    #  Any alphanumeric sequence of characters or underscore
+    other_word_pattern_string = r'(?P<word>\w+)'
     final_pattern.append(other_word_pattern_string)
     return '|'.join(final_pattern)
 
-token_pattern = re.compile(build_regex(), re.UNICODE|re.IGNORECASE)
+token_pattern = re.compile(build_regex(), re.UNICODE | re.IGNORECASE)
 
 
 class WorkingHours(object):
-    """
-        Extract working hours from the text provided and make schedule as a dict which keys
-        are weekdays in iso format (1 to 7) and values are Range objects (for hours range).
-        Example (__repr__ output):
-        {1: 9.00 - 19.00, 2: 9.00 - 19.00, 3: 9.00 - 19.00, 4: 9.00 - 19.00, 5: 9.00 - 19.00, 6: None, 7: None}
-        If value is None then either it's not working time (or perhaps something was incorrect during text parsing).
-
-    """
+    """Extract working hours from the text provided."""
 
     def __init__(self, text):
-        self._raw_schedule = {weekday_number:None for weekday_number in set(WEEKDAYS.values())}
+        self._raw_schedule = OrderedDict([(weekday_number, None) for weekday_number in set(WEEKDAYS.values())])
+        self.schedule = None
         ranges = Parser(text).parse()
         for dayhours_range_pair in ranges:
             days_range = dayhours_range_pair[0]
@@ -76,8 +77,9 @@ class WorkingHours(object):
             if days_range:
                 for day in range(days_range.start, days_range.end + 1):
                     self._raw_schedule[day] = hours_range
-            elif hours_range:  # If only hours part, then we apply this part for all days
-                for day in self.schedule.keys():
+            elif hours_range:
+                # If only hours part, then we apply this part for all days
+                for day in self._raw_schedule.keys():
                     self._raw_schedule[day] = hours_range
             else:
                 raise ValueError
@@ -91,7 +93,8 @@ class WorkingHours(object):
         if start_datetime and end_datetime:
             return start_datetime <= datetime_obj < end_datetime
         else:
-            return True     # Safe default
+            # Safe default
+            return True
 
     def get_next_working_day(self, datetime_obj):
         """
@@ -135,7 +138,7 @@ class WorkingHours(object):
             7: None}
 
         """
-        schedule = {}
+        schedule = OrderedDict()
         for weekday in self._raw_schedule.keys():
             hours_range = self._raw_schedule[weekday]
             time_obj = time()
@@ -147,6 +150,24 @@ class WorkingHours(object):
                 schedule[weekday] = None
         return schedule
 
+    def print_schedule(self, format="%H:%M", delimiter="\n",
+                       weekend_name="выходной"):
+        print_aggregator = []
+        weekday_names = {val: key for key, val in WEEKDAYS.items() if len(key) == 2}
+        if self.schedule is None:
+            self.build_schedule()
+        for weekday in self.schedule.keys():
+            hours_range = self.schedule[weekday]
+            line = [weekday_names.get(weekday, ''), ": "]
+            if hours_range is None:
+                line.append(weekend_name)
+            else:
+                start = hours_range[0].strftime(format)
+                end = hours_range[1].strftime(format)
+                line.extend([start, ' - ', end])
+            print_aggregator.append(''.join(line))
+        return delimiter.join(print_aggregator)
+
     @staticmethod
     def parse_hours(hour, datetime_obj):
         hours_datetime = copy.copy(datetime_obj)
@@ -156,8 +177,8 @@ class WorkingHours(object):
             except ValueError:
                 pass
             else:
-                return hours_datetime.replace(hour=dummy_datetime.hour, minute=dummy_datetime.minute,
-                                              second=0, microsecond=0)
+                return hours_datetime.replace(hour=dummy_datetime.hour,
+                    minute=dummy_datetime.minute, second=0, microsecond=0)
         try:
             dummy_datetime = datetime.strptime(hour, '%H')
         except ValueError:
@@ -176,7 +197,8 @@ class Token(object):
         - hour: '19:00' or '19.00' or '19-00' or '19'
         - weekday: 'пн' or 'суббота'
         - weekday_range: 'будни'
-        - range_mark: delimiter of weekdays or hours such as '-', i.e. second hyphen in 9-00 - 19-00
+        - range_mark: delimiter of weekdays or hours such as '-',
+          i.e. second hyphen in 9-00 - 19-00
         - word: any alphanumeric characters and _
     """
 
@@ -204,20 +226,23 @@ class Range(object):
 class Parser(object):
 
     """
-        Parses text with working days and ours. Takes into consideration SHOWROOM_WORDS for primary working hours.
+        Parses text with working days and ours.
+        Takes into consideration SHOWROOM_WORDS for primary working hours.
     """
 
     DAYTIME_TOKEN_TYPES = ('hour', 'weekday', 'weekday_range')
     SHOWROOM_WORDS = ('продаж', 'автосалон')
-    EXCLUDE_WORDS = ('с', 'c')          # Exclude 'с ... до ...' and English 'c'
+    EXCLUDE_WORDS = ('с', 'c')  # Exclude 'с ... до ...' and English 'c'
 
     def __init__(self, text):
-        self.state = 'OUTSIDE_DATETIME'     # Initial state
+        self.state = 'OUTSIDE_DATETIME' # Initial state
         self.text = text
-        self._tokens = token_pattern.finditer(self.text.lower())  # Tokens iterator
+        # Tokens iterator
+        self._tokens = token_pattern.finditer(self.text.lower())
         self.ranges = []
 
-        # Auxiliary variables to handle day and hour Range objects in INSIDE_DATETIME state
+        # Auxiliary variables to handle day and hour Range objects
+        # in INSIDE_DATETIME state
         self.days_range = None
         self.hours_range = None
         self.show_room_flag = False  #
@@ -235,8 +260,8 @@ class Parser(object):
 
     def parse(self):
         """
-        Return iterable of tuples (Range(), Range()) where first Range is for days range and
-        second one is for hours Range.
+        Return iterable of tuples (Range(), Range()) 
+        where first Range is for days range and second one is for hours Range.
         Example (__repr__ output):
         [(1 - 5, 9-00 - 19-00), (6 - 6, 10-00 - 18-00)]
         """
@@ -269,8 +294,8 @@ class Parser(object):
                     next_token.type not in self.DAYTIME_TOKEN_TYPES and self.ranges:
                 break
 
-            elif self.state == 'INSIDE_DATETIME' and self.hours_range and self.days_range and \
-                    token.type in self.DAYTIME_TOKEN_TYPES:
+            elif self.state == 'INSIDE_DATETIME' and self.hours_range \
+                    and self.days_range and token.type in self.DAYTIME_TOKEN_TYPES:
                 self.state = 'OUTSIDE_DATETIME'
                 self.save_ranges()
 
@@ -320,15 +345,19 @@ class Parser(object):
 class Tests(unittest.TestCase):
 
     TYPICAL_CASES_WITH_CORRECT_RESULTS = [
-        ('Автосалон и сервисный центр: Понедельник - Воскресенье 9:00 - 19:00', '[(1 - 7, 9:00 - 19:00)]',
-         True, False, True),
-        ('Автосалон: ежедневно 9:00 - 21:00', '[(1 - 7, 9:00 - 21:00)]', True, False, True),
+        ('Автосалон и сервисный центр: Понедельник - Воскресенье 9:00 - 19:00', 
+            '[(1 - 7, 9:00 - 19:00)]', True, False, True),
+        ('Автосалон: ежедневно 9:00 - 21:00', 
+            '[(1 - 7, 9:00 - 21:00)]', True, False, True),
         ('Сб.:10.00-18.00', '[(6 - 6, 10.00 - 18.00)]', False, False, False),
         ('Пн-Пт: 9.00-19.00', '[(1 - 5, 9.00 - 19.00)]', True, False, False),
-        ('Ежедневно с 8.00 до 21.00', '[(1 - 7, 8.00 - 21.00)]', True, False, True),
+        ('Ежедневно с 8.00 до 21.00', 
+            '[(1 - 7, 8.00 - 21.00)]', True, False, True),
         ('Пн - Пт.: 10 - 19', '[(1 - 5, 10 - 19)]', True, False, False),
-        ('Отдел продаж 09.00 - 21.00 (ежедневно)', '[(1 - 7, 09.00 - 21.00)]', True, False, True),
-        ('Пн-Пт: 9-00-19-00 Сб.:10-00 - 18-00', '[(1 - 5, 9-00 - 19-00), (6 - 6, 10-00 - 18-00)]', True, False, False),
+        ('Отдел продаж 09.00 - 21.00 (ежедневно)', 
+            '[(1 - 7, 09.00 - 21.00)]', True, False, True),
+        ('Пн-Пт: 9-00-19-00 Сб.:10-00 - 18-00', 
+            '[(1 - 5, 9-00 - 19-00), (6 - 6, 10-00 - 18-00)]', True, False, False),
         ('Автосалон: пн-пт 09:00-20:00, сб-вс 10:00-19:00 Сервисный центр: ежедневно 08:00-20:00',
          '[(1 - 5, 09:00 - 20:00), (6 - 7, 10:00 - 19:00)]', True, False, True),
         ("""
@@ -356,7 +385,7 @@ class Tests(unittest.TestCase):
         Пн-пт: 9.00-19.00
         Сб, вс - выходной
         """, '[(1 - 5, 8.00 - 20.00), (6 - 7, None)]', True, False, False),
-
+        ('9:00-20:00', '[(None, 9:00 - 20:00)]', True, False, True),
     ]
 
     def test_parser(self):
