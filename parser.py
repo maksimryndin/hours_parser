@@ -112,17 +112,18 @@ class WorkingHours(object):
 
     def get_next_working_hours(self, datetime_obj=datetime.now()):
         next_working_day = self.get_next_working_day(datetime_obj)
-
-        next_date = datetime(datetime_obj.year, datetime_obj.month, datetime_obj.day)
-        # Modular subtraction
-        delta = ((next_working_day + 7) - datetime_obj.isoweekday()) % 7
-        next_date += timedelta(days=delta)
         start_datetime = end_datetime = None
         if next_working_day:
-            hours_range = self._raw_schedule[next_working_day]
-            if hours_range:
-                start_datetime = self.parse_hours(hours_range.start, next_date)
-                end_datetime = self.parse_hours(hours_range.end, next_date)
+            next_date = datetime(datetime_obj.year, datetime_obj.month, 
+                                 datetime_obj.day)
+		    # Modular subtraction
+            delta = ((next_working_day + 7) - datetime_obj.isoweekday()) % 7
+            next_date += timedelta(days=delta)
+            if next_working_day:
+                hours_range = self._raw_schedule[next_working_day]
+                if hours_range:
+                    start_datetime = self.parse_hours(hours_range.start, next_date)
+                    end_datetime = self.parse_hours(hours_range.end, next_date)
         return start_datetime, end_datetime
 
     def build_schedule(self):
@@ -236,9 +237,10 @@ class Parser(object):
 
     def __init__(self, text):
         self.state = 'OUTSIDE_DATETIME' # Initial state
-        self.text = text
+        # Text preprocessing
+        self.text = text.lower().replace('–', '-').replace('—', '-')
         # Tokens iterator
-        self._tokens = token_pattern.finditer(self.text.lower())
+        self._tokens = token_pattern.finditer(self.text)
         self.ranges = []
 
         # Auxiliary variables to handle day and hour Range objects
@@ -386,6 +388,9 @@ class Tests(unittest.TestCase):
         Сб, вс - выходной
         """, '[(1 - 5, 8.00 - 20.00), (6 - 7, None)]', True, False, False),
         ('9:00-20:00', '[(None, 9:00 - 20:00)]', True, False, True),
+        # Long dash test
+        ('пн – сб с 8.00 до 22.00; вс с 9.00 до 22.00', 
+         '[(1 - 6, 8.00 - 22.00), (7 - 7, 9.00 - 22.00)]', True, False, True)
     ]
 
     def test_parser(self):
