@@ -227,7 +227,7 @@ class Range(object):
 class Parser(object):
 
     """
-        Parses text with working days and ours.
+        Parses text with working days and hours.
         Takes into consideration SHOWROOM_WORDS for primary working hours.
     """
 
